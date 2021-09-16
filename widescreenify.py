@@ -71,9 +71,11 @@ def get_frame_group(video, current_frame, stop_frame, mode):
             print("Video read error")
             exit(0)
 
-        input_frames[frame_index, :, width_start:width_end, :] = frame[:, width_start:width_end, :]
         if (mode == "train"):
+            input_frames[frame_index, :, width_start:width_end, :] = frame[:, width_start:width_end, :]
             output_frames[frame_index] = frame
+        else:
+            input_frames[frame_index, :, width_start:width_end, :] = frame
 
     if (mode == "train"):
         return group_stop_frame, input_frames, output_frames
@@ -271,7 +273,7 @@ update_G = trainerG.apply_gradients(g_grads)
 
 if (mode == "train"):
     iterations = ceil((stop_frame - current_frame) / FRAME_GROUP) #Total number of iterations to use.
-    sample_frequency = 10 #How often to generate sample gif of translated images.
+    sample_frequency = 1000 #How often to generate sample gif of translated images.
     save_frequency = 200000 #How often to save model.
     load_model = False #Whether to load the model or begin training from scratch.
 
@@ -349,8 +351,8 @@ if (mode == "test"):
             ckpt = tf.train.get_checkpoint_state(ckpt_path)
             saver.restore(sess,ckpt.model_checkpoint_path)
 
-            output_file_name = ntpath.basename(video_path).split(".")[-2] + "_WIDE" + ntpath.basename(video_path).split(".")[-1]
-            wide_video = cv2.VideoWriter(os.path.join(output_path, output_file_name), cv2.VideoWriter_fourcc('H','2','6','4'), frame_rate, (FRAME_WIDTH, FRAME_HEIGHT))
+            output_file_name = ntpath.basename(video_path).split(".")[-2] + "_WIDE." + ntpath.basename(video_path).split(".")[-1]
+            wide_video = cv2.VideoWriter(os.path.join(output_path, output_file_name), cv2.VideoWriter_fourcc('M','P','E','G'), frame_rate, (FRAME_WIDTH, FRAME_HEIGHT))
 
             for i in range(iterations):
                 # Load frame group
