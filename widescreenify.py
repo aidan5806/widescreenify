@@ -23,6 +23,7 @@ import cv2
 FRAME_GROUP = 1
 FRAME_HEIGHT = 720
 FRAME_WIDTH = 1280
+EPOCHS = 10
 
 H_RATIO = 9
 W_RATIO = 16
@@ -273,9 +274,8 @@ update_G = trainerG.apply_gradients(g_grads)
 
 if (mode == "train"):
     iterations = ceil((stop_frame - current_frame) / FRAME_GROUP) #Total number of iterations to use.
-    sample_frequency = 1000 #How often to generate sample gif of translated images.
-    save_frequency = 200000 #How often to save model.
-    load_model = False #Whether to load the model or begin training from scratch.
+    sample_frequency = 2000 #How often to generate sample gif of translated images.
+    save_frequency = 20000 #How often to save model.
 
     init = tf.compat.v1.global_variables_initializer()
     saver = tf.compat.v1.train.Saver()
@@ -296,8 +296,9 @@ if (mode == "train"):
             assert not np.any(np.isnan(xs))
             assert not np.any(np.isnan(ys))
 
-            _,dLoss = sess.run([update_D,d_loss],feed_dict={real_in:ys,condition_in:xs}) #Update the discriminator
-            _,gLoss = sess.run([update_G,g_loss],feed_dict={real_in:ys,condition_in:xs}) #Update the generator
+            for _ in range(EPOCHS):
+                _,dLoss = sess.run([update_D,d_loss],feed_dict={real_in:ys,condition_in:xs}) #Update the discriminator
+                _,gLoss = sess.run([update_G,g_loss],feed_dict={real_in:ys,condition_in:xs}) #Update the generator
 
             if i % sample_frequency == 0:
                 print("Gen Loss: " + str(gLoss) + " Disc Loss: " + str(dLoss))
@@ -317,13 +318,13 @@ if (mode == "train"):
                 width_end = FRAME_WIDTH - (width_diff // 2)
 
                 sample_frame = (np.around((sample_G[0] / 2.0) + 0.5) * 255.0).astype(np.uint8)
-                sample_frame_overlay = sample_frame
+                sample_frame_overlay = np.copy(sample_frame)
                 sample_frame_overlay[:, width_start:width_end, :] = imagesX[frame_idx].astype(np.uint8)[:, width_start:width_end, :]
 
-                Image.fromarray(imagesX[frame_idx].astype(np.uint8), 'RGB').save(os.path.join(output_path, str(time_str + "_input.png")))
-                Image.fromarray(sample_frame, 'RGB').save(os.path.join(output_path, str(time_str + "_output.png")))
-                Image.fromarray(sample_frame_overlay, 'RGB').save(os.path.join(output_path, str(time_str + "_output_overlay.png")))
-                Image.fromarray(imagesY[frame_idx].astype(np.uint8), 'RGB').save(os.path.join(output_path, str(time_str + "_ref.png")))
+                Image.fromarray(imagesX[frame_idx][:,:,::-1].astype(np.uint8), 'RGB').save(os.path.join(output_path, str(time_str + "_input.png")))
+                Image.fromarray(sample_frame[:,:,::-1], 'RGB').save(os.path.join(output_path, str(time_str + "_output.png")))
+                Image.fromarray(sample_frame_overlay[:,:,::-1], 'RGB').save(os.path.join(output_path, str(time_str + "_output_overlay.png")))
+                Image.fromarray(imagesY[frame_idx][:,:,::-1].astype(np.uint8), 'RGB').save(os.path.join(output_path, str(time_str + "_ref.png")))
 
             if ((i % save_frequency == 0) and (i != 0)):
                 if not os.path.exists(ckpt_path):
