@@ -21,9 +21,11 @@ import cv2
 
 # PARAMS
 FRAME_GROUP = 1
-FRAME_HEIGHT = 720
-FRAME_WIDTH = 1280
-EPOCHS = 10
+FRAME_HEIGHT = 144 # 720
+FRAME_WIDTH = 256 # 1280
+FRAME_RESCALE = 1
+EPOCHS = 1
+MODEL_SCALE = 32 # 8
 
 H_RATIO = 9
 W_RATIO = 16
@@ -72,6 +74,9 @@ def get_frame_group(video, current_frame, stop_frame, mode):
             print("Video read error")
             exit(0)
 
+        if (FRAME_RESCALE):
+            frame = cv2.resize(frame, dsize=(FRAME_WIDTH,FRAME_HEIGHT), interpolation=cv2.INTER_CUBIC)
+
         if (mode == "train"):
             input_frames[frame_index, :, width_start:width_end, :] = frame[:, width_start:width_end, :]
             output_frames[frame_index] = frame
@@ -93,47 +98,47 @@ def lrelu(x, leak=0.2, name="lrelu"):
 def generator(c):
     with tf.compat.v1.variable_scope('generator'):
         #Encoder
-        enc0 = slim.conv2d(c,16,[3,3],padding="SAME",
+        enc0 = slim.conv2d(c,MODEL_SCALE*2,[3,3],padding="SAME",
             biases_initializer=None,activation_fn=lrelu,
             weights_initializer=initializer)
         enc0 = tf.nn.space_to_depth(enc0,2)
 
-        enc1 = slim.conv2d(enc0,32,[3,3],padding="SAME",
+        enc1 = slim.conv2d(enc0,MODEL_SCALE*4,[3,3],padding="SAME",
             activation_fn=lrelu,normalizer_fn=slim.batch_norm,
             weights_initializer=initializer)
         enc1 = tf.nn.space_to_depth(enc1,2)
 
-        enc2 = slim.conv2d(enc1,32,[3,3],padding="SAME",
+        enc2 = slim.conv2d(enc1,MODEL_SCALE*4,[3,3],padding="SAME",
             normalizer_fn=slim.batch_norm,activation_fn=lrelu,
             weights_initializer=initializer)
         enc2 = tf.nn.space_to_depth(enc2,2)
 
-        enc3 = slim.conv2d(enc2,64,[3,3],padding="SAME",
+        enc3 = slim.conv2d(enc2,MODEL_SCALE*8,[3,3],padding="SAME",
             normalizer_fn=slim.batch_norm,activation_fn=lrelu,
             weights_initializer=initializer)
         enc3 = tf.nn.space_to_depth(enc3,2)
 
         #Decoder
         gen0 = slim.conv2d(
-            enc3,num_outputs=64,kernel_size=[3,3],
+            enc3,num_outputs=MODEL_SCALE*8,kernel_size=[3,3],
             padding="SAME",normalizer_fn=slim.batch_norm,
             activation_fn=tf.nn.elu, weights_initializer=initializer)
         gen0 = tf.nn.depth_to_space(gen0,2)
 
         gen1 = slim.conv2d(
-            tf.concat([gen0,enc2],3),num_outputs=64,kernel_size=[3,3],
+            tf.concat([gen0,enc2],3),num_outputs=MODEL_SCALE*8,kernel_size=[3,3],
             padding="SAME",normalizer_fn=slim.batch_norm,
             activation_fn=tf.nn.elu,weights_initializer=initializer)
         gen1 = tf.nn.depth_to_space(gen1,2)
 
         gen2 = slim.conv2d(
-            tf.concat([gen1,enc1],3),num_outputs=32,kernel_size=[3,3],
+            tf.concat([gen1,enc1],3),num_outputs=MODEL_SCALE*4,kernel_size=[3,3],
             padding="SAME",normalizer_fn=slim.batch_norm,
             activation_fn=tf.nn.elu,weights_initializer=initializer)
         gen2 = tf.nn.depth_to_space(gen2,2)
 
         gen3 = slim.conv2d(
-            tf.concat([gen2,enc0],3),num_outputs=32,kernel_size=[3,3],
+            tf.concat([gen2,enc0],3),num_outputs=MODEL_SCALE*4,kernel_size=[3,3],
             padding="SAME",normalizer_fn=slim.batch_norm,
             activation_fn=tf.nn.elu, weights_initializer=initializer)
         gen3 = tf.nn.depth_to_space(gen3,2)
@@ -147,21 +152,21 @@ def generator(c):
 
 def discriminator(bottom, reuse=False):
     with tf.compat.v1.variable_scope('discriminator'):
-        filters = [8,16,32,32]
+        filters = [MODEL_SCALE*1,MODEL_SCALE*2,MODEL_SCALE*4,MODEL_SCALE*4]
 
         #Programatically define layers
         for i in range(len(filters)):
             if i == 0:
                 layer = slim.conv2d(bottom,filters[i],[3,3],padding="SAME",scope='d'+str(i),
-                    biases_initializer=None,activation_fn=lrelu,stride=[2,2],
+                    biases_initializer=None,activation_fn=lrelu,stride=[3,3],
                     reuse=reuse,weights_initializer=initializer)
             else:
                 layer = slim.conv2d(bottom,filters[i],[3,3],padding="SAME",scope='d'+str(i),
-                    normalizer_fn=slim.batch_norm,activation_fn=lrelu,stride=[2,2],
+                    normalizer_fn=slim.batch_norm,activation_fn=lrelu,stride=[3,3],
                     reuse=reuse,weights_initializer=initializer)
             bottom = layer
 
-        dis_full = slim.fully_connected(slim.flatten(bottom),1024,activation_fn=lrelu,scope='dl',
+        dis_full = slim.fully_connected(slim.flatten(bottom),MODEL_SCALE*32,activation_fn=lrelu,scope='dl',
             reuse=reuse, weights_initializer=initializer)
 
         d_out = slim.fully_connected(dis_full,1,activation_fn=tf.nn.sigmoid,scope='do',
@@ -216,9 +221,10 @@ if (current_frame >= stop_frame):
     print(f"Start frame is after stop frame:: Start:{current_frame} Stop:{stop_frame}")
     exit(1)
 
-if not check_props(frame_width, frame_height, mode):
-    print(f"Incompatible input video dimensions:: {frame_width}x{frame_height}")
-    exit(1)
+if not FRAME_RESCALE:
+    if not check_props(frame_width, frame_height, mode):
+        print(f"Incompatible input video dimensions:: {frame_width}x{frame_height}")
+        exit(1)
 
 # current_frame, input_frames, output_frames = get_frame_group(video, current_frame, stop_frame, mode)
 
@@ -264,8 +270,8 @@ d_loss = -tf.reduce_mean(tf.math.log(Dx) + tf.math.log(1.-Dg)) #This optimizes t
 g_loss = -tf.reduce_mean(tf.math.log(Dg)) + 100*tf.reduce_mean(tf.abs(Gx - real_in)) #This optimizes the generator.
 
 #The below code is responsible for applying gradient descent to update the GAN.
-trainerD = tf.compat.v1.train.AdamOptimizer(learning_rate=0.00002,beta1=0.5)
-trainerG = tf.compat.v1.train.AdamOptimizer(learning_rate=0.00002,beta1=0.5)
+trainerD = tf.compat.v1.train.AdamOptimizer(learning_rate=0.0002,beta1=0.5)
+trainerG = tf.compat.v1.train.AdamOptimizer(learning_rate=0.002,beta1=0.5)
 d_grads = trainerD.compute_gradients(d_loss, slim.get_variables(scope='discriminator'))
 g_grads = trainerG.compute_gradients(g_loss, slim.get_variables(scope='generator'))
 
@@ -274,8 +280,8 @@ update_G = trainerG.apply_gradients(g_grads)
 
 if (mode == "train"):
     iterations = ceil((stop_frame - current_frame) / FRAME_GROUP) #Total number of iterations to use.
-    sample_frequency = 2000 #How often to generate sample gif of translated images.
-    save_frequency = 20000 #How often to save model.
+    sample_frequency = 200 #How often to generate sample gif of translated images.
+    save_frequency = 2000 #How often to save model.
 
     init = tf.compat.v1.global_variables_initializer()
     saver = tf.compat.v1.train.Saver()
@@ -300,9 +306,10 @@ if (mode == "train"):
                 _,dLoss = sess.run([update_D,d_loss],feed_dict={real_in:ys,condition_in:xs}) #Update the discriminator
                 _,gLoss = sess.run([update_G,g_loss],feed_dict={real_in:ys,condition_in:xs}) #Update the generator
 
+            assert not (np.isnan(gLoss) or np.isnan(dLoss))
+
             if i % sample_frequency == 0:
                 print("Gen Loss: " + str(gLoss) + " Disc Loss: " + str(dLoss))
-                assert not (np.isnan(gLoss) or np.isnan(dLoss))
                 frame_idx = np.random.randint(0,len(imagesX))
                 xs = ((np.reshape(imagesX[frame_idx],[1,FRAME_HEIGHT,FRAME_WIDTH,3]) / 255.0) - 0.5) * 2.0
                 ys = ((np.reshape(imagesY[frame_idx],[1,FRAME_HEIGHT,FRAME_WIDTH,3]) / 255.0) - 0.5) * 2.0
