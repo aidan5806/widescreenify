@@ -104,7 +104,7 @@ def generator(c):
         enc0 = tf.nn.space_to_depth(enc0,2)
 
         enc1 = slim.conv2d(enc0,MODEL_SCALE*4,[3,3],padding="SAME",
-            activation_fn=lrelu,normalizer_fn=slim.batch_norm,
+            normalizer_fn=slim.batch_norm,activation_fn=lrelu,
             weights_initializer=initializer)
         enc1 = tf.nn.space_to_depth(enc1,2)
 
@@ -226,29 +226,9 @@ if not FRAME_RESCALE:
         print(f"Incompatible input video dimensions:: {frame_width}x{frame_height}")
         exit(1)
 
-# current_frame, input_frames, output_frames = get_frame_group(video, current_frame, stop_frame, mode)
-
-# print(input_frames.shape)
-# print(output_frames.shape)
-# print(current_frame)
-
-# video.release()
-
-# input_image = Image.fromarray(input_clip[FRAME_GROUP-1], 'RGB')
-# target_image = Image.fromarray(target_clip[FRAME_GROUP-1], 'RGB')
-# input_image.show()
-# target_image.show()
-
-# Normalize clips to range of 0 to 1
-# input_clip = input_clip / 255.0
-# target_clip = target_clip / 255.0
-
-# gpus = tf.config.experimental.list_physical_devices('GPU')
-# if gpus:
-#   try:
-#     tf.config.experimental.set_virtual_device_configuration(gpus[0], [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=4096)])
-#   except RuntimeError as e:
-#     print(e)
+################################################################################
+# CONNECT MODEL
+################################################################################
 
 # Define and connect model
 tf.compat.v1.reset_default_graph()
@@ -270,13 +250,17 @@ d_loss = -tf.reduce_mean(tf.math.log(Dx) + tf.math.log(1.-Dg)) #This optimizes t
 g_loss = -tf.reduce_mean(tf.math.log(Dg)) + 100*tf.reduce_mean(tf.abs(Gx - real_in)) #This optimizes the generator.
 
 #The below code is responsible for applying gradient descent to update the GAN.
-trainerD = tf.compat.v1.train.AdamOptimizer(learning_rate=0.0002,beta1=0.5)
-trainerG = tf.compat.v1.train.AdamOptimizer(learning_rate=0.002,beta1=0.5)
+trainerD = tf.compat.v1.train.AdamOptimizer(learning_rate=0.00002,beta1=0.5)
+trainerG = tf.compat.v1.train.AdamOptimizer(learning_rate=0.00002,beta1=0.5)
 d_grads = trainerD.compute_gradients(d_loss, slim.get_variables(scope='discriminator'))
 g_grads = trainerG.compute_gradients(g_loss, slim.get_variables(scope='generator'))
 
 update_D = trainerD.apply_gradients(d_grads)
 update_G = trainerG.apply_gradients(g_grads)
+
+################################################################################
+# TRAIN MODEL
+################################################################################
 
 if (mode == "train"):
     iterations = ceil((stop_frame - current_frame) / FRAME_GROUP) #Total number of iterations to use.
@@ -345,6 +329,10 @@ if (mode == "train"):
         saver.save(sess,ckpt_path+'/widescreenify_model_'+str(datetime.now().strftime("%m%d%Y_%H_%M_%S"))+'.ckpt')
         print("Saved Model")
 
+################################################################################
+# PREDICT
+################################################################################
+
 if (mode == "test"):
     iterations = ceil((stop_frame - current_frame) / FRAME_GROUP) #Total number of iterations to use.
 
@@ -383,5 +371,3 @@ if (mode == "test"):
             wide_video.release()
 
 video.release()
-
-# https://learnopencv.com/read-write-and-display-a-video-using-opencv-cpp-python/
