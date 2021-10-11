@@ -75,7 +75,10 @@ def get_frame_group(video, current_frame, stop_frame, mode):
             exit(0)
 
         if (FRAME_RESCALE):
-            frame = cv2.resize(frame, dsize=(FRAME_WIDTH,FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR)
+            if (mode == "train"):
+                frame = cv2.resize(frame, dsize=(FRAME_WIDTH,FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR)
+            else:
+                frame = cv2.resize(frame, dsize=(((FRAME_WIDTH // W_RATIO) * I_RATIO),FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR)
 
         if (mode == "train"):
             input_frames[frame_index, :, width_start:width_end, :] = frame[:, width_start:width_end, :]
@@ -250,8 +253,8 @@ d_loss = -tf.reduce_mean(tf.math.log(Dx) + tf.math.log(1.-Dg)) #This optimizes t
 g_loss = -tf.reduce_mean(tf.math.log(Dg)) + 100*tf.reduce_mean(tf.abs(Gx - real_in)) #This optimizes the generator.
 
 #The below code is responsible for applying gradient descent to update the GAN.
-trainerD = tf.compat.v1.train.AdamOptimizer(learning_rate=0.00002,beta1=0.5)
-trainerG = tf.compat.v1.train.AdamOptimizer(learning_rate=0.00002,beta1=0.5)
+trainerD = tf.compat.v1.train.AdamOptimizer(learning_rate=0.0002,beta1=0.5)
+trainerG = tf.compat.v1.train.AdamOptimizer(learning_rate=0.002,beta1=0.5)
 d_grads = trainerD.compute_gradients(d_loss, slim.get_variables(scope='discriminator'))
 g_grads = trainerG.compute_gradients(g_loss, slim.get_variables(scope='generator'))
 
@@ -308,7 +311,7 @@ if (mode == "train"):
                 width_start = width_diff // 2
                 width_end = FRAME_WIDTH - (width_diff // 2)
 
-                sample_frame = (np.around((sample_G[0] / 2.0) + 0.5) * 255.0).astype(np.uint8)
+                sample_frame = (np.around(((sample_G[0] / 2.0) + 0.5) * 255.0)).astype(np.uint8)
                 sample_frame_overlay = np.copy(sample_frame)
                 sample_frame_overlay[:, width_start:width_end, :] = imagesX[frame_idx].astype(np.uint8)[:, width_start:width_end, :]
 
