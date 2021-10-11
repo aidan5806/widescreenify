@@ -17,7 +17,7 @@ import tensorflow as tf
 import tf_slim as slim
 
 from PIL import Image
-import cv2
+import cv2 # https://learnopencv.com/read-write-and-display-a-video-using-opencv-cpp-python/
 
 # PARAMS
 FRAME_GROUP = 1
@@ -25,7 +25,7 @@ FRAME_HEIGHT = 144 # 720
 FRAME_WIDTH = 256 # 1280
 FRAME_RESCALE = 1
 EPOCHS = 1
-MODEL_SCALE = 32 # 8
+MODEL_SCALE = 8 # Originally 32
 
 H_RATIO = 9
 W_RATIO = 16
@@ -158,11 +158,11 @@ def discriminator(bottom, reuse=False):
         for i in range(len(filters)):
             if i == 0:
                 layer = slim.conv2d(bottom,filters[i],[3,3],padding="SAME",scope='d'+str(i),
-                    biases_initializer=None,activation_fn=lrelu,stride=[3,3],
+                    biases_initializer=None,activation_fn=lrelu,stride=[2,2],
                     reuse=reuse,weights_initializer=initializer)
             else:
                 layer = slim.conv2d(bottom,filters[i],[3,3],padding="SAME",scope='d'+str(i),
-                    normalizer_fn=slim.batch_norm,activation_fn=lrelu,stride=[3,3],
+                    normalizer_fn=slim.batch_norm,activation_fn=lrelu,stride=[2,2],
                     reuse=reuse,weights_initializer=initializer)
             bottom = layer
 
