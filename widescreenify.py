@@ -61,9 +61,9 @@ def get_frame_group(video, current_frame, stop_frame, mode):
     width_start = width_diff // 2
     width_end = FRAME_WIDTH - (width_diff // 2)
 
-    input_frames = np.empty((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
+    input_frames = np.zeros((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
     if (mode == "train"):
-        output_frames = np.empty((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
+        output_frames = np.zeros((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
 
     video.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
 
