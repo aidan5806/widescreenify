@@ -255,6 +255,7 @@ g_loss = -tf.reduce_mean(tf.math.log(Dg)) + 100*tf.reduce_mean(tf.abs(Gx - real_
 #The below code is responsible for applying gradient descent to update the GAN.
 trainerD = tf.compat.v1.train.AdamOptimizer(learning_rate=0.0002,beta1=0.5)
 trainerG = tf.compat.v1.train.AdamOptimizer(learning_rate=0.002,beta1=0.5)
+
 d_grads = trainerD.compute_gradients(d_loss, slim.get_variables(scope='discriminator'))
 g_grads = trainerG.compute_gradients(g_loss, slim.get_variables(scope='generator'))
 
