@@ -75,7 +75,7 @@ def get_frame_group(video, current_frame, stop_frame, mode):
             exit(0)
 
         if (FRAME_RESCALE):
-            frame = cv2.resize(frame, dsize=(FRAME_WIDTH,FRAME_HEIGHT), interpolation=cv2.INTER_CUBIC)
+            frame = cv2.resize(frame, dsize=(FRAME_WIDTH,FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR)
 
         if (mode == "train"):
             input_frames[frame_index, :, width_start:width_end, :] = frame[:, width_start:width_end, :]
