@@ -17,13 +17,15 @@ import tensorflow as tf
 import tf_slim as slim
 
 from PIL import Image
-import cv2
+import cv2 # https://learnopencv.com/read-write-and-display-a-video-using-opencv-cpp-python/
 
 # PARAMS
 FRAME_GROUP = 1
-FRAME_HEIGHT = 720
-FRAME_WIDTH = 1280
-EPOCHS = 10
+FRAME_HEIGHT = 144 # 720
+FRAME_WIDTH = 256 # 1280
+FRAME_RESCALE = 1
+EPOCHS = 1
+MODEL_SCALE = 8 # Originally 32
 
 H_RATIO = 9
 W_RATIO = 16
@@ -59,9 +61,9 @@ def get_frame_group(video, current_frame, stop_frame, mode):
     width_start = width_diff // 2
     width_end = FRAME_WIDTH - (width_diff // 2)
 
-    input_frames = np.empty((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
+    input_frames = np.zeros((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
     if (mode == "train"):
-        output_frames = np.empty((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
+        output_frames = np.zeros((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
 
     video.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
 
@@ -71,6 +73,12 @@ def get_frame_group(video, current_frame, stop_frame, mode):
         if not ret:
             print("Video read error")
             exit(0)
+
+        if (FRAME_RESCALE):
+            if (mode == "train"):
+                frame = cv2.resize(frame, dsize=(FRAME_WIDTH,FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR)
+            else:
+                frame = cv2.resize(frame, dsize=(((FRAME_WIDTH // W_RATIO) * I_RATIO),FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR)
 
         if (mode == "train"):
             input_frames[frame_index, :, width_start:width_end, :] = frame[:, width_start:width_end, :]
@@ -93,47 +101,47 @@ def lrelu(x, leak=0.2, name="lrelu"):
 def generator(c):
     with tf.compat.v1.variable_scope('generator'):
         #Encoder
-        enc0 = slim.conv2d(c,16,[3,3],padding="SAME",
+        enc0 = slim.conv2d(c,MODEL_SCALE*2,[3,3],padding="SAME",
             biases_initializer=None,activation_fn=lrelu,
             weights_initializer=initializer)
         enc0 = tf.nn.space_to_depth(enc0,2)
 
-        enc1 = slim.conv2d(enc0,32,[3,3],padding="SAME",
-            activation_fn=lrelu,normalizer_fn=slim.batch_norm,
+        enc1 = slim.conv2d(enc0,MODEL_SCALE*4,[3,3],padding="SAME",
+            normalizer_fn=slim.batch_norm,activation_fn=lrelu,
             weights_initializer=initializer)
         enc1 = tf.nn.space_to_depth(enc1,2)
 
-        enc2 = slim.conv2d(enc1,32,[3,3],padding="SAME",
+        enc2 = slim.conv2d(enc1,MODEL_SCALE*4,[3,3],padding="SAME",
             normalizer_fn=slim.batch_norm,activation_fn=lrelu,
             weights_initializer=initializer)
         enc2 = tf.nn.space_to_depth(enc2,2)
 
-        enc3 = slim.conv2d(enc2,64,[3,3],padding="SAME",
+        enc3 = slim.conv2d(enc2,MODEL_SCALE*8,[3,3],padding="SAME",
             normalizer_fn=slim.batch_norm,activation_fn=lrelu,
             weights_initializer=initializer)
         enc3 = tf.nn.space_to_depth(enc3,2)
 
         #Decoder
         gen0 = slim.conv2d(
-            enc3,num_outputs=64,kernel_size=[3,3],
+            enc3,num_outputs=MODEL_SCALE*8,kernel_size=[3,3],
             padding="SAME",normalizer_fn=slim.batch_norm,
             activation_fn=tf.nn.elu, weights_initializer=initializer)
         gen0 = tf.nn.depth_to_space(gen0,2)
 
         gen1 = slim.conv2d(
-            tf.concat([gen0,enc2],3),num_outputs=64,kernel_size=[3,3],
+            tf.concat([gen0,enc2],3),num_outputs=MODEL_SCALE*8,kernel_size=[3,3],
             padding="SAME",normalizer_fn=slim.batch_norm,
             activation_fn=tf.nn.elu,weights_initializer=initializer)
         gen1 = tf.nn.depth_to_space(gen1,2)
 
         gen2 = slim.conv2d(
-            tf.concat([gen1,enc1],3),num_outputs=32,kernel_size=[3,3],
+            tf.concat([gen1,enc1],3),num_outputs=MODEL_SCALE*4,kernel_size=[3,3],
             padding="SAME",normalizer_fn=slim.batch_norm,
             activation_fn=tf.nn.elu,weights_initializer=initializer)
         gen2 = tf.nn.depth_to_space(gen2,2)
 
         gen3 = slim.conv2d(
-            tf.concat([gen2,enc0],3),num_outputs=32,kernel_size=[3,3],
+            tf.concat([gen2,enc0],3),num_outputs=MODEL_SCALE*4,kernel_size=[3,3],
             padding="SAME",normalizer_fn=slim.batch_norm,
             activation_fn=tf.nn.elu, weights_initializer=initializer)
         gen3 = tf.nn.depth_to_space(gen3,2)
@@ -147,7 +155,7 @@ def generator(c):
 
 def discriminator(bottom, reuse=False):
     with tf.compat.v1.variable_scope('discriminator'):
-        filters = [8,16,32,32]
+        filters = [MODEL_SCALE*1,MODEL_SCALE*2,MODEL_SCALE*4,MODEL_SCALE*4]
 
         #Programatically define layers
         for i in range(len(filters)):
@@ -161,7 +169,7 @@ def discriminator(bottom, reuse=False):
                     reuse=reuse,weights_initializer=initializer)
             bottom = layer
 
-        dis_full = slim.fully_connected(slim.flatten(bottom),1024,activation_fn=lrelu,scope='dl',
+        dis_full = slim.fully_connected(slim.flatten(bottom),MODEL_SCALE*32,activation_fn=lrelu,scope='dl',
             reuse=reuse, weights_initializer=initializer)
 
         d_out = slim.fully_connected(dis_full,1,activation_fn=tf.nn.sigmoid,scope='do',
@@ -216,33 +224,14 @@ if (current_frame >= stop_frame):
     print(f"Start frame is after stop frame:: Start:{current_frame} Stop:{stop_frame}")
     exit(1)
 
-if not check_props(frame_width, frame_height, mode):
-    print(f"Incompatible input video dimensions:: {frame_width}x{frame_height}")
-    exit(1)
+if not FRAME_RESCALE:
+    if not check_props(frame_width, frame_height, mode):
+        print(f"Incompatible input video dimensions:: {frame_width}x{frame_height}")
+        exit(1)
 
-# current_frame, input_frames, output_frames = get_frame_group(video, current_frame, stop_frame, mode)
-
-# print(input_frames.shape)
-# print(output_frames.shape)
-# print(current_frame)
-
-# video.release()
-
-# input_image = Image.fromarray(input_clip[FRAME_GROUP-1], 'RGB')
-# target_image = Image.fromarray(target_clip[FRAME_GROUP-1], 'RGB')
-# input_image.show()
-# target_image.show()
-
-# Normalize clips to range of 0 to 1
-# input_clip = input_clip / 255.0
-# target_clip = target_clip / 255.0
-
-# gpus = tf.config.experimental.list_physical_devices('GPU')
-# if gpus:
-#   try:
-#     tf.config.experimental.set_virtual_device_configuration(gpus[0], [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=4096)])
-#   except RuntimeError as e:
-#     print(e)
+################################################################################
+# CONNECT MODEL
+################################################################################
 
 # Define and connect model
 tf.compat.v1.reset_default_graph()
@@ -264,18 +253,23 @@ d_loss = -tf.reduce_mean(tf.math.log(Dx) + tf.math.log(1.-Dg)) #This optimizes t
 g_loss = -tf.reduce_mean(tf.math.log(Dg)) + 100*tf.reduce_mean(tf.abs(Gx - real_in)) #This optimizes the generator.
 
 #The below code is responsible for applying gradient descent to update the GAN.
-trainerD = tf.compat.v1.train.AdamOptimizer(learning_rate=0.00002,beta1=0.5)
-trainerG = tf.compat.v1.train.AdamOptimizer(learning_rate=0.00002,beta1=0.5)
+trainerD = tf.compat.v1.train.AdamOptimizer(learning_rate=0.0002,beta1=0.5)
+trainerG = tf.compat.v1.train.AdamOptimizer(learning_rate=0.002,beta1=0.5)
+
 d_grads = trainerD.compute_gradients(d_loss, slim.get_variables(scope='discriminator'))
 g_grads = trainerG.compute_gradients(g_loss, slim.get_variables(scope='generator'))
 
 update_D = trainerD.apply_gradients(d_grads)
 update_G = trainerG.apply_gradients(g_grads)
 
+################################################################################
+# TRAIN MODEL
+################################################################################
+
 if (mode == "train"):
     iterations = ceil((stop_frame - current_frame) / FRAME_GROUP) #Total number of iterations to use.
-    sample_frequency = 2000 #How often to generate sample gif of translated images.
-    save_frequency = 20000 #How often to save model.
+    sample_frequency = 200 #How often to generate sample gif of translated images.
+    save_frequency = 2000 #How often to save model.
 
     init = tf.compat.v1.global_variables_initializer()
     saver = tf.compat.v1.train.Saver()
@@ -300,9 +294,10 @@ if (mode == "train"):
                 _,dLoss = sess.run([update_D,d_loss],feed_dict={real_in:ys,condition_in:xs}) #Update the discriminator
                 _,gLoss = sess.run([update_G,g_loss],feed_dict={real_in:ys,condition_in:xs}) #Update the generator
 
+            assert not (np.isnan(gLoss) or np.isnan(dLoss))
+
             if i % sample_frequency == 0:
                 print("Gen Loss: " + str(gLoss) + " Disc Loss: " + str(dLoss))
-                assert not (np.isnan(gLoss) or np.isnan(dLoss))
                 frame_idx = np.random.randint(0,len(imagesX))
                 xs = ((np.reshape(imagesX[frame_idx],[1,FRAME_HEIGHT,FRAME_WIDTH,3]) / 255.0) - 0.5) * 2.0
                 ys = ((np.reshape(imagesY[frame_idx],[1,FRAME_HEIGHT,FRAME_WIDTH,3]) / 255.0) - 0.5) * 2.0
@@ -317,7 +312,7 @@ if (mode == "train"):
                 width_start = width_diff // 2
                 width_end = FRAME_WIDTH - (width_diff // 2)
 
-                sample_frame = (np.around((sample_G[0] / 2.0) + 0.5) * 255.0).astype(np.uint8)
+                sample_frame = (np.around(((sample_G[0] / 2.0) + 0.5) * 255.0)).astype(np.uint8)
                 sample_frame_overlay = np.copy(sample_frame)
                 sample_frame_overlay[:, width_start:width_end, :] = imagesX[frame_idx].astype(np.uint8)[:, width_start:width_end, :]
 
@@ -337,6 +332,10 @@ if (mode == "train"):
             os.makedirs(ckpt_path)
         saver.save(sess,ckpt_path+'/widescreenify_model_'+str(datetime.now().strftime("%m%d%Y_%H_%M_%S"))+'.ckpt')
         print("Saved Model")
+
+################################################################################
+# PREDICT
+################################################################################
 
 if (mode == "test"):
     iterations = ceil((stop_frame - current_frame) / FRAME_GROUP) #Total number of iterations to use.
@@ -376,5 +375,3 @@ if (mode == "test"):
             wide_video.release()
 
 video.release()
-
-# https://learnopencv.com/read-write-and-display-a-video-using-opencv-cpp-python/
