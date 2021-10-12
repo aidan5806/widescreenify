@@ -26,7 +26,9 @@ FRAME_HEIGHT = 144 # 720
 FRAME_WIDTH = 256 # 1280
 FRAME_RESCALE = 1
 EPOCHS = 1
-MODEL_SCALE = 32 # Originally 32, used 8 at HD
+MODEL_SCALE = 16 # Originally 32, used 8 at HD
+TEMPORAL_RADIUS = 2 
+TIME_SLICE = (TEMPORAL_RADIUS * 2) + 1
 
 H_RATIO = 9
 W_RATIO = 16
@@ -54,7 +56,7 @@ def check_props(width, height, mode):
 
 # Ingest video and create train and test frame group
 # output_frames will return None if mode is test
-def get_frame_group(video, current_frame, start_frame, stop_frame, mode, random_frame):
+def get_frame_group(video, current_frame, start_frame, stop_frame, mode, random_frame, temporal_sampling):
     width_diff = FRAME_WIDTH - ((FRAME_WIDTH // W_RATIO) * I_RATIO)
     width_start = width_diff // 2
     width_end = FRAME_WIDTH - (width_diff // 2)
@@ -62,7 +64,8 @@ def get_frame_group(video, current_frame, start_frame, stop_frame, mode, random_
     if (random_frame):
         current_frame = random.randrange(start_frame, stop_frame-FRAME_GROUP)
 
-    group_stop_frame = current_frame + FRAME_GROUP if ((current_frame + FRAME_GROUP) <= stop_frame) else stop_frame
+    group_start_frame = current_frame
+    group_stop_frame =  min(current_frame + FRAME_GROUP, stop_frame)
     group_frame_count = group_stop_frame - current_frame
 
     input_frames = np.zeros((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
@@ -71,6 +74,7 @@ def get_frame_group(video, current_frame, start_frame, stop_frame, mode, random_
 
     video.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
 
+    # Get normal frame range
     for frame_index in range(0, group_frame_count):
         ret, frame = video.read()
 
@@ -90,10 +94,94 @@ def get_frame_group(video, current_frame, start_frame, stop_frame, mode, random_
         else:
             input_frames[frame_index, :, width_start:width_end, :] = frame
 
-    if (mode == "train"):
-        return group_stop_frame, input_frames, output_frames
+    # Get temporal padding if available
+    if (temporal_sampling):
+        pre_input_frames = np.zeros((TEMPORAL_RADIUS, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
+        post_input_frames = np.zeros((TEMPORAL_RADIUS, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
+        if (mode == "train"):
+            pre_output_frames = np.zeros((TEMPORAL_RADIUS, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
+            post_output_frames = np.zeros((TEMPORAL_RADIUS, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
+
+        if ((group_start_frame - start_frame) < TEMPORAL_RADIUS):
+            pre_start_frame = start_frame
+            pre_blanks = TEMPORAL_RADIUS - max((group_start_frame - start_frame), 0)
+        else:
+            pre_start_frame = group_start_frame - TEMPORAL_RADIUS
+            pre_blanks = 0
+
+        if ((stop_frame - group_stop_frame) < TEMPORAL_RADIUS):
+            post_stop_frame = stop_frame
+            post_blanks = TEMPORAL_RADIUS - (stop_frame - group_stop_frame)
+        else:
+            post_stop_frame = group_stop_frame + TEMPORAL_RADIUS
+            post_blanks = 0
+
+        # Get pre frame range
+        for frame_index in range(0, TEMPORAL_RADIUS-pre_blanks):
+            video.set(cv2.CAP_PROP_POS_FRAMES, pre_start_frame+frame_index)
+
+            ret, frame = video.read()
+
+            if not ret:
+                print("Video read error")
+                exit(0)
+
+            if (FRAME_RESCALE):
+                if (mode == "train"):
+                    frame = cv2.resize(frame, dsize=(FRAME_WIDTH,FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR)
+                else:
+                    frame = cv2.resize(frame, dsize=(((FRAME_WIDTH // W_RATIO) * I_RATIO),FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR)
+
+            if (mode == "train"):
+                pre_input_frames[frame_index+pre_blanks, :, width_start:width_end, :] = frame[:, width_start:width_end, :]
+                pre_output_frames[frame_index+pre_blanks] = frame
+            else:
+                pre_input_frames[frame_index+pre_blanks, :, width_start:width_end, :] = frame
+
+        # Get pre frame range
+        for frame_index in range(0, TEMPORAL_RADIUS-post_blanks):
+            video.set(cv2.CAP_PROP_POS_FRAMES, group_stop_frame+frame_index)
+
+            ret, frame = video.read()
+
+            if not ret:
+                print("Video read error")
+                exit(0)
+
+            if (FRAME_RESCALE):
+                if (mode == "train"):
+                    frame = cv2.resize(frame, dsize=(FRAME_WIDTH,FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR)
+                else:
+                    frame = cv2.resize(frame, dsize=(((FRAME_WIDTH // W_RATIO) * I_RATIO),FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR)
+
+            if (mode == "train"):
+                post_input_frames[frame_index, :, width_start:width_end, :] = frame[:, width_start:width_end, :]
+                post_output_frames[frame_index] = frame
+            else:
+                post_input_frames[frame_index, :, width_start:width_end, :] = frame
+
+        padded_input_frames = np.copy(np.concatenate((pre_input_frames, input_frames, post_input_frames), axis=0))
+        if (mode == "train"):
+            padded_output_frames =  np.copy(np.concatenate((pre_output_frames, output_frames, post_output_frames), axis=0))
+
+        temporal_input_frames = np.zeros((group_frame_count, FRAME_HEIGHT*TIME_SLICE, FRAME_WIDTH, 3), np.dtype('float32'))
+        for frame_index in range(0, group_frame_count):
+            temporal_input_frames[frame_index] = np.copy(np.reshape(padded_input_frames[frame_index:(frame_index+TIME_SLICE)], (FRAME_HEIGHT*TIME_SLICE, FRAME_WIDTH, 3)))
+
+        if (mode == "train"):
+            temporal_output_frames = np.zeros((group_frame_count, FRAME_HEIGHT*TIME_SLICE, FRAME_WIDTH, 3), np.dtype('float32'))
+            for frame_index in range(0, group_frame_count):
+                temporal_output_frames[frame_index] = np.copy(np.reshape(padded_output_frames[frame_index:(frame_index+TIME_SLICE)], (FRAME_HEIGHT*TIME_SLICE, FRAME_WIDTH, 3)))
+
+        if (mode == "train"):
+            return group_stop_frame, temporal_input_frames, temporal_output_frames
+        else:
+            return group_stop_frame, temporal_input_frames, None
     else:
-        return group_stop_frame, input_frames, None
+        if (mode == "train"):
+            return group_stop_frame, input_frames, output_frames
+        else:
+            return group_stop_frame, input_frames, None
 
 #This function performns a leaky relu activation, which is needed for the discriminator network.
 def lrelu(x, leak=0.2, name="lrelu"):
@@ -195,6 +283,7 @@ parser.add_argument("-s", "--start_frame", type=int, default=0, help="Set the st
 parser.add_argument("-f", "--stop_frame", type=int, help="Set maximum number of frames to train or test by indicating the stop frame.")
 parser.add_argument("-l", "--load_model", action="store_true", help="Load latest checkpoint from model directory. Will default to true if mode is \"test\".")
 parser.add_argument("-r", "--random", action="store_true", help="Load a set of frames random point between start frame and stop frame.")
+parser.add_argument("-t", "--temporal", action="store_true", help="Enables temporal training and sampling.")
 
 args = parser.parse_args()
 
@@ -215,6 +304,12 @@ if (args.random):
 else:
     random_frame = False
 
+if (args.temporal):
+    temporal_sampling = True
+    temporal_size = TIME_SLICE
+else:
+    temporal_sampling = False
+    temporal_size = 1
 
 # Ingest video clip
 # Initial Video clip: "D:\HDD Downloads\Media\Avatar - The Legend of Korra\Season 1\The.Legend.of.Korra.S01E01-E02.720p.HDTV.x264-HWE.mkv"
@@ -252,8 +347,8 @@ tf.compat.v1.disable_eager_execution()
 #This initializaer is used to initialize all the weights of the network.
 initializer = tf.compat.v1.truncated_normal_initializer(stddev=0.02)
 
-condition_in = tf.compat.v1.placeholder(shape=[None,FRAME_HEIGHT,FRAME_WIDTH,3],dtype=tf.float32)
-real_in = tf.compat.v1.placeholder(shape=[None,FRAME_HEIGHT,FRAME_WIDTH,3],dtype=tf.float32) #Real images
+condition_in = tf.compat.v1.placeholder(shape=[None,FRAME_HEIGHT*temporal_size,FRAME_WIDTH,3],dtype=tf.float32)
+real_in = tf.compat.v1.placeholder(shape=[None,FRAME_HEIGHT*temporal_size,FRAME_WIDTH,3],dtype=tf.float32) #Real images
 
 Gx = generator(condition_in) #Generates images from random z vectors
 Dx = discriminator(real_in) #Produces probabilities for real images
@@ -265,8 +360,8 @@ d_loss = -tf.reduce_mean(tf.math.log(Dx) + tf.math.log(1.-Dg)) #This optimizes t
 g_loss = -tf.reduce_mean(tf.math.log(Dg)) + 100*tf.reduce_mean(tf.abs(Gx - real_in)) #This optimizes the generator.
 
 #The below code is responsible for applying gradient descent to update the GAN.
-trainerD = tf.compat.v1.train.AdamOptimizer(learning_rate=0.000002,beta1=0.5)
-trainerG = tf.compat.v1.train.AdamOptimizer(learning_rate=0.00002,beta1=0.5)
+trainerD = tf.compat.v1.train.AdamOptimizer(learning_rate=0.0002,beta1=0.5)
+trainerG = tf.compat.v1.train.AdamOptimizer(learning_rate=0.002,beta1=0.5)
 
 d_grads = trainerD.compute_gradients(d_loss, slim.get_variables(scope='discriminator'))
 g_grads = trainerG.compute_gradients(g_loss, slim.get_variables(scope='generator'))
@@ -293,7 +388,7 @@ if (mode == "train"):
 
         for i in range(iterations):
             # Load frame group
-            current_frame, imagesX, imagesY =  get_frame_group(video, current_frame, start_frame, stop_frame, mode, random_frame)
+            current_frame, imagesX, imagesY =  get_frame_group(video, current_frame, start_frame, stop_frame, mode, random_frame, temporal_sampling)
 
             # Normalize frames
             ys = ((imagesY / 255.0) - 0.5) * 2.0
@@ -311,8 +406,8 @@ if (mode == "train"):
             if i % sample_frequency == 0:
                 frame_idx = np.random.randint(0,len(imagesX))
                 print(f"Iteration: {i} Current Frame: {current_frame-FRAME_GROUP+frame_idx} Gen Loss: {str(gLoss)} Disc Loss: {str(dLoss)}")
-                xs = ((np.reshape(imagesX[frame_idx],[1,FRAME_HEIGHT,FRAME_WIDTH,3]) / 255.0) - 0.5) * 2.0
-                ys = ((np.reshape(imagesY[frame_idx],[1,FRAME_HEIGHT,FRAME_WIDTH,3]) / 255.0) - 0.5) * 2.0
+                xs = ((np.reshape(imagesX[frame_idx],[1,FRAME_HEIGHT*temporal_size,FRAME_WIDTH,3]) / 255.0) - 0.5) * 2.0
+                ys = ((np.reshape(imagesY[frame_idx],[1,FRAME_HEIGHT*temporal_size,FRAME_WIDTH,3]) / 255.0) - 0.5) * 2.0
                 sample_G = sess.run(Gx,feed_dict={condition_in:xs}) #Use new z to get sample images from generator.
 
                 if not os.path.exists(output_path):
@@ -368,7 +463,7 @@ if (mode == "test"):
 
             for i in range(iterations):
                 # Load frame group
-                current_frame, imagesX, imagesY =  get_frame_group(video, current_frame, start_frame, stop_frame, mode, False)
+                current_frame, imagesX, imagesY =  get_frame_group(video, current_frame, start_frame, stop_frame, mode, False, temporal_sampling)
                 xs = ((imagesX / 255.0) - 0.5) * 2.0
                 sample_G = sess.run(Gx,feed_dict={condition_in:xs}) #Use new z to get sample images from generator.
 
