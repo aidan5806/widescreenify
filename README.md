@@ -3,7 +3,7 @@
 ## Table of Contents
 * [Team Members](#team-members)
 * [Setup](#setup)
---
+
 ## Team Members
 * Aidan Maycock 
 * Amogh Manjunath
