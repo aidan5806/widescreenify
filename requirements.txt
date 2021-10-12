@@ -1,0 +1,11 @@
+######################################
+##   Python Package Requirements    ##
+######################################
+# To install, run:
+#   `$ pip install -r requirements.txt` 
+# in a terminal window.
+numpy
+matplotlib
+opencv-contrib-python
+pillow
+tensorflow
