@@ -27,7 +27,8 @@ FRAME_WIDTH = 256 # 1280
 FRAME_RESCALE = 1
 EPOCHS = 1
 MODEL_SCALE = 16 # Originally 32, used 8 at HD
-TEMPORAL_RADIUS = 2 
+TEMPORAL_RADIUS = 2
+TEMPORAL_SPACING = 10
 TIME_SLICE = (TEMPORAL_RADIUS * 2) + 1
 
 H_RATIO = 9
@@ -102,23 +103,21 @@ def get_frame_group(video, current_frame, start_frame, stop_frame, mode, random_
             pre_output_frames = np.zeros((TEMPORAL_RADIUS, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
             post_output_frames = np.zeros((TEMPORAL_RADIUS, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
 
-        if ((group_start_frame - start_frame) < TEMPORAL_RADIUS):
+        if ((group_start_frame - start_frame) < (TEMPORAL_SPACING*TEMPORAL_RADIUS)):
             pre_start_frame = start_frame
-            pre_blanks = TEMPORAL_RADIUS - max((group_start_frame - start_frame), 0)
+            pre_blanks = TEMPORAL_RADIUS - max(((group_start_frame - start_frame) // TEMPORAL_SPACING), 0)
         else:
-            pre_start_frame = group_start_frame - TEMPORAL_RADIUS
             pre_blanks = 0
+            pre_start_frame = group_start_frame - (TEMPORAL_SPACING*TEMPORAL_RADIUS)
 
-        if ((stop_frame - group_stop_frame) < TEMPORAL_RADIUS):
-            post_stop_frame = stop_frame
-            post_blanks = TEMPORAL_RADIUS - (stop_frame - group_stop_frame)
+        if ((stop_frame - group_stop_frame) < (TEMPORAL_SPACING*TEMPORAL_RADIUS)):
+            post_blanks = TEMPORAL_RADIUS - ((stop_frame - group_stop_frame) // TEMPORAL_SPACING)
         else:
-            post_stop_frame = group_stop_frame + TEMPORAL_RADIUS
             post_blanks = 0
 
         # Get pre frame range
         for frame_index in range(0, TEMPORAL_RADIUS-pre_blanks):
-            video.set(cv2.CAP_PROP_POS_FRAMES, pre_start_frame+frame_index)
+            video.set(cv2.CAP_PROP_POS_FRAMES, pre_start_frame+(frame_index*TEMPORAL_SPACING))
 
             ret, frame = video.read()
 
@@ -140,7 +139,7 @@ def get_frame_group(video, current_frame, start_frame, stop_frame, mode, random_
 
         # Get pre frame range
         for frame_index in range(0, TEMPORAL_RADIUS-post_blanks):
-            video.set(cv2.CAP_PROP_POS_FRAMES, group_stop_frame+frame_index)
+            video.set(cv2.CAP_PROP_POS_FRAMES, group_stop_frame+(frame_index*TEMPORAL_SPACING))
 
             ret, frame = video.read()
 
