@@ -85,6 +85,8 @@ def get_frame_group(video, current_frame, start_frame, stop_frame, mode, random_
                 frame = cv2.resize(frame, dsize=(((FRAME_WIDTH // W_RATIO) * I_RATIO),FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR)
 
         if (mode == "train"):
+            # frame = cv2.GaussianBlur(frame, (7,7), cv2.BORDER_DEFAULT)
+            frame = np.dstack((cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)))
             input_frames[frame_index, :, width_start:width_end, :] = frame[:, width_start:width_end, :]
             output_frames[frame_index] = frame
         else:
