@@ -12,6 +12,7 @@ import ntpath
 
 import numpy as np
 from math import ceil
+import random
 
 import tensorflow as tf
 import tf_slim as slim
@@ -25,7 +26,7 @@ FRAME_HEIGHT = 144 # 720
 FRAME_WIDTH = 256 # 1280
 FRAME_RESCALE = 1
 EPOCHS = 1
-MODEL_SCALE = 8 # Originally 32
+MODEL_SCALE = 32 # Originally 32, used 8 at HD
 
 H_RATIO = 9
 W_RATIO = 16
@@ -53,13 +54,16 @@ def check_props(width, height, mode):
 
 # Ingest video and create train and test frame group
 # output_frames will return None if mode is test
-def get_frame_group(video, current_frame, stop_frame, mode):
-    group_stop_frame = current_frame + FRAME_GROUP if ((current_frame + FRAME_GROUP) <= stop_frame) else stop_frame
-    group_frame_count = group_stop_frame - current_frame
-
+def get_frame_group(video, current_frame, start_frame, stop_frame, mode, random_frame):
     width_diff = FRAME_WIDTH - ((FRAME_WIDTH // W_RATIO) * I_RATIO)
     width_start = width_diff // 2
     width_end = FRAME_WIDTH - (width_diff // 2)
+
+    if (random_frame):
+        current_frame = random.randrange(start_frame, stop_frame-FRAME_GROUP)
+
+    group_stop_frame = current_frame + FRAME_GROUP if ((current_frame + FRAME_GROUP) <= stop_frame) else stop_frame
+    group_frame_count = group_stop_frame - current_frame
 
     input_frames = np.zeros((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
     if (mode == "train"):
@@ -190,6 +194,7 @@ parser.add_argument("-c", "--ckpt", type=str, default="./model", help="Set path 
 parser.add_argument("-s", "--start_frame", type=int, default=0, help="Set the starting frame for video ingest.")
 parser.add_argument("-f", "--stop_frame", type=int, help="Set maximum number of frames to train or test by indicating the stop frame.")
 parser.add_argument("-l", "--load_model", action="store_true", help="Load latest checkpoint from model directory. Will default to true if mode is \"test\".")
+parser.add_argument("-r", "--random", action="store_true", help="Load a set of frames random point between start frame and stop frame.")
 
 args = parser.parse_args()
 
@@ -197,12 +202,19 @@ video_path = args.path
 ckpt_path = args.ckpt
 mode = args.mode
 stop_frame = args.stop_frame
+start_frame = args.start_frame
 current_frame = args.start_frame
 if (args.load_model or (mode == "test")):
     load_model = True
 else:
     load_model = False
 output_path = args.output
+if (args.random):
+    random_frame = True
+    random.seed()
+else:
+    random_frame = False
+
 
 # Ingest video clip
 # Initial Video clip: "D:\HDD Downloads\Media\Avatar - The Legend of Korra\Season 1\The.Legend.of.Korra.S01E01-E02.720p.HDTV.x264-HWE.mkv"
@@ -253,8 +265,8 @@ d_loss = -tf.reduce_mean(tf.math.log(Dx) + tf.math.log(1.-Dg)) #This optimizes t
 g_loss = -tf.reduce_mean(tf.math.log(Dg)) + 100*tf.reduce_mean(tf.abs(Gx - real_in)) #This optimizes the generator.
 
 #The below code is responsible for applying gradient descent to update the GAN.
-trainerD = tf.compat.v1.train.AdamOptimizer(learning_rate=0.0002,beta1=0.5)
-trainerG = tf.compat.v1.train.AdamOptimizer(learning_rate=0.002,beta1=0.5)
+trainerD = tf.compat.v1.train.AdamOptimizer(learning_rate=0.00002,beta1=0.5)
+trainerG = tf.compat.v1.train.AdamOptimizer(learning_rate=0.0002,beta1=0.5)
 
 d_grads = trainerD.compute_gradients(d_loss, slim.get_variables(scope='discriminator'))
 g_grads = trainerG.compute_gradients(g_loss, slim.get_variables(scope='generator'))
@@ -281,7 +293,7 @@ if (mode == "train"):
 
         for i in range(iterations):
             # Load frame group
-            current_frame, imagesX, imagesY =  get_frame_group(video, current_frame, stop_frame, mode)
+            current_frame, imagesX, imagesY =  get_frame_group(video, current_frame, start_frame, stop_frame, mode, random_frame)
 
             # Normalize frames
             ys = ((imagesY / 255.0) - 0.5) * 2.0
@@ -297,8 +309,8 @@ if (mode == "train"):
             assert not (np.isnan(gLoss) or np.isnan(dLoss))
 
             if i % sample_frequency == 0:
-                print("Gen Loss: " + str(gLoss) + " Disc Loss: " + str(dLoss))
                 frame_idx = np.random.randint(0,len(imagesX))
+                print(f"Iteration: {i} Current Frame: {current_frame-FRAME_GROUP+frame_idx} Gen Loss: {str(gLoss)} Disc Loss: {str(dLoss)}")
                 xs = ((np.reshape(imagesX[frame_idx],[1,FRAME_HEIGHT,FRAME_WIDTH,3]) / 255.0) - 0.5) * 2.0
                 ys = ((np.reshape(imagesY[frame_idx],[1,FRAME_HEIGHT,FRAME_WIDTH,3]) / 255.0) - 0.5) * 2.0
                 sample_G = sess.run(Gx,feed_dict={condition_in:xs}) #Use new z to get sample images from generator.
@@ -356,7 +368,7 @@ if (mode == "test"):
 
             for i in range(iterations):
                 # Load frame group
-                current_frame, imagesX, imagesY =  get_frame_group(video, current_frame, stop_frame, mode)
+                current_frame, imagesX, imagesY =  get_frame_group(video, current_frame, start_frame, stop_frame, mode, False)
                 xs = ((imagesX / 255.0) - 0.5) * 2.0
                 sample_G = sess.run(Gx,feed_dict={condition_in:xs}) #Use new z to get sample images from generator.
 
