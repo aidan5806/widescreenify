@@ -2,6 +2,7 @@ from PIL import Image
 import numpy as np
 import cv2
 import os, shutil
+import ffmpeg 
 
 from utils import create_foreground
 import cfg_generators
@@ -29,15 +30,15 @@ def shift_2d_replace(data, dx, dy):
     """
     shifted_data = np.roll(data, dx, axis=1)
     if dx < 0:
-        shifted_data[:, dx:] = 0
+        shifted_data[:, dx:] = 255
     elif dx > 0:
-        shifted_data[:, 0:dx] = 0
+        shifted_data[:, 0:dx] = 255
 
     shifted_data = np.roll(shifted_data, dy, axis=0)
     if dy < 0:
-        shifted_data[dy:, :] = 0
+        shifted_data[dy:, :] = 255
     elif dy > 0:
-        shifted_data[0:dy, :] = 0
+        shifted_data[0:dy, :] = 255
     return shifted_data
 
 def shift_2d(data, dx, dy, x_wraps, y_wraps): 
@@ -77,8 +78,11 @@ def clean_or_mk_data_dir(subdir, name, force = False):
 
     return dir_path
 
-def create_video_for_frames():
-    pass
+def create_video_for_frames(frame_dir, fps, output_path):
+    glob_pttn = os.path.join(frame_dir, '*.jpg')
+    (ffmpeg.input(glob_pttn, pattern_type='glob', framerate=fps)
+        .output(output_path)
+        .run())
 
 def make_video(
     name: str,
@@ -91,6 +95,10 @@ def make_video(
     force: bool = True
 ):
     frame_dir = clean_or_mk_data_dir('frames', name, force = force)
+    video_dir = clean_or_mk_data_dir('video', name, force = force)
+
+    print(f'Frame Dir: {frame_dir}')
+    print(f'Video Dir: {video_dir}')
     
     movement = foreground.pop('movement', {})
     dx, dy = movement.pop('dx', 0), movement.pop('dy', 0)
@@ -106,29 +114,48 @@ def make_video(
         x_wraps, 
         y_wraps
     )
+
     
 
     for step in range(fps * secs):
         frame = frame_for_step(step)
-        frame_fpath = os.path.join(frame_dir, f'{name}_{int(step)}.png')
-        Image.fromarray(frame[:,:, ::-1].astype(np.uint8), 'RGB').save(frame_fpath)
+        
+        saved_frame = frame[:,:, ::-1].astype(np.uint8)
+
+        saved_frame_width = len(saved_frame[0])
+        if saved_frame_width % 2 == 1: 
+            saved_frame = saved_frame[:,0:(saved_frame_width-1),:]
+
+        saved_frame_height = len(saved_frame)
+        if saved_frame_height % 2 == 1: 
+            saved_frame = saved_frame[0:(saved_frame_height-1),:, :]
+            
+        num = str(step).ljust(5, '0')
+        frame_fpath = os.path.join(frame_dir, f'{name}_{num}.jpg')
+        Image.fromarray(saved_frame, 'RGB').save(frame_fpath)
+
+
+
+    video_name = os.path.join(video_dir, f'{name}.mp4')
+    create_video_for_frames(frame_dir, fps, video_name)
+
 
 ## Example Usage ##
-# video_cfg = {
-#     'name': 'test', 
-#     'height': 100, 
-#     'width': 100, 
-#     'secs': 2, 
-#     'foreground': {
-#         'nodes': [
-#             cfg_generators.circle_cfg((0,0), 50)
-#         ],
-#         'movement': {
-#             'dx': 1, 
-#             'dy': 1, 
-#             'y_wraps': False, 
-#             'x_wraps': False, 
-#         },   
-#     }
-# }
-# make_video(**video_cfg)
+video_cfg = {
+    'name': 'test', 
+    'height': 100, 
+    'width': 100, 
+    'secs': 4, 
+    'foreground': {
+        'nodes': [
+            cfg_generators.circle_cfg((0,0), 50)
+        ],
+        'movement': {
+            'dx': 1, 
+            'dy': 0, 
+            'y_wraps': False, 
+            'x_wraps': False, 
+        },   
+    }
+}
+make_video(**video_cfg)
