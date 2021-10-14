@@ -23,8 +23,8 @@ import cv2 # https://learnopencv.com/read-write-and-display-a-video-using-opencv
 
 # PARAMS
 FRAME_GROUP = 1
-FRAME_HEIGHT = 288 # 720
-FRAME_WIDTH = 512 # 1280
+FRAME_HEIGHT = 144 # 720
+FRAME_WIDTH = 256 # 1280
 FRAME_RESCALE = 1
 EPOCHS = 1
 MODEL_SCALE = 32 # Originally 32, used 8 at HD
@@ -115,8 +115,8 @@ def lrelu(x, leak=0.2, name="lrelu"):
          f2 = 0.5 * (1 - leak)
          return f1 * x + f2 * abs(x)
 
-def generator(c):
-    with tf.compat.v1.variable_scope('generator'):
+def generator(c, name):
+    with tf.compat.v1.variable_scope('generator_' + name):
         #Encoder
         enc0 = slim.conv2d(c,MODEL_SCALE*2,[3,3],padding="SAME",
             biases_initializer=None,activation_fn=lrelu,
@@ -170,8 +170,8 @@ def generator(c):
         return g_out
 
 
-def discriminator(bottom, reuse=False):
-    with tf.compat.v1.variable_scope('discriminator'):
+def discriminator(bottom, name, reuse=False):
+    with tf.compat.v1.variable_scope('discriminator_' + name):
         filters = [MODEL_SCALE*1,MODEL_SCALE*2,MODEL_SCALE*4,MODEL_SCALE*4]
 
         #Programatically define layers
@@ -268,24 +268,43 @@ initializer = tf.compat.v1.truncated_normal_initializer(stddev=0.02)
 condition_in = tf.compat.v1.placeholder(shape=[None,FRAME_HEIGHT,FRAME_WIDTH,3],dtype=tf.float32)
 real_in = tf.compat.v1.placeholder(shape=[None,FRAME_HEIGHT,FRAME_WIDTH,3],dtype=tf.float32) #Real images
 
-Gx = generator(condition_in) #Generates images from random z vectors
-Dx = discriminator(real_in) #Produces probabilities for real images
-Dg = discriminator(Gx,reuse=True) #Produces probabilities for generator images
+Gx_fill = generator(condition_in, 'fill') #Generates images from random z vectors
+Dx_fill = discriminator(real_in, 'fill') #Produces probabilities for real images
+Dg_fill = discriminator(Gx_fill, 'fill',reuse=True) #Produces probabilities for generator images
+
+Gx_enh = generator(condition_in, 'enh') #Generates images from random z vectors
+Dx_enh = discriminator(real_in, 'enh') #Produces probabilities for real images
+Dg_enh = discriminator(Gx_enh, 'enh',reuse=True) #Produces probabilities for generator images
 
 #These functions together define the optimization objective of the GAN.
-d_loss = -tf.reduce_mean(tf.math.log(Dx) + tf.math.log(1.-Dg)) #This optimizes the discriminator.
+d_loss_fill = -tf.reduce_mean(tf.math.log(Dx_fill) + tf.math.log(1.-Dg_fill)) #This optimizes the discriminator.
 #For generator we use traditional GAN objective as well as L1 loss
-g_loss = -tf.reduce_mean(tf.math.log(Dg)) + 100*tf.reduce_mean(tf.abs(Gx - real_in)) #This optimizes the generator.
+g_loss_fill = -tf.reduce_mean(tf.math.log(Dg_fill)) + 100*tf.reduce_mean(tf.abs(Gx_fill - real_in)) #This optimizes the generator.
+
+#These functions together define the optimization objective of the GAN.
+d_loss_enh = -tf.reduce_mean(tf.math.log(Dx_enh) + tf.math.log(1.-Dg_enh)) #This optimizes the discriminator.
+#For generator we use traditional GAN objective as well as L1 loss
+g_loss_enh = -tf.reduce_mean(tf.math.log(Dg_enh)) + 100*tf.reduce_mean(tf.abs(Gx_enh - real_in)) #This optimizes the generator.
 
 #The below code is responsible for applying gradient descent to update the GAN.
-trainerD = tf.compat.v1.train.AdamOptimizer(learning_rate=0.000002,beta1=0.5)
-trainerG = tf.compat.v1.train.AdamOptimizer(learning_rate=0.00002,beta1=0.5)
+trainerD_fill = tf.compat.v1.train.AdamOptimizer(learning_rate=0.000002,beta1=0.5)
+trainerG_fill = tf.compat.v1.train.AdamOptimizer(learning_rate=0.00002,beta1=0.5)
 
-d_grads = trainerD.compute_gradients(d_loss, slim.get_variables(scope='discriminator'))
-g_grads = trainerG.compute_gradients(g_loss, slim.get_variables(scope='generator'))
+#The below code is responsible for applying gradient descent to update the GAN.
+trainerD_enh = tf.compat.v1.train.AdamOptimizer(learning_rate=0.000002,beta1=0.5)
+trainerG_enh = tf.compat.v1.train.AdamOptimizer(learning_rate=0.00002,beta1=0.5)
 
-update_D = trainerD.apply_gradients(d_grads)
-update_G = trainerG.apply_gradients(g_grads)
+d_grads_fill = trainerD_fill.compute_gradients(d_loss_fill, slim.get_variables(scope='discriminator_fill'))
+g_grads_fill = trainerG_fill.compute_gradients(g_loss_fill, slim.get_variables(scope='generator_fill'))
+
+d_grads_enh = trainerD_enh.compute_gradients(d_loss_enh, slim.get_variables(scope='discriminator_enh'))
+g_grads_enh = trainerG_enh.compute_gradients(g_loss_enh, slim.get_variables(scope='generator_enh'))
+
+update_D_fill = trainerD_fill.apply_gradients(d_grads_fill)
+update_G_fill = trainerG_fill.apply_gradients(g_grads_fill)
+
+update_D_enh = trainerD_enh.apply_gradients(d_grads_enh)
+update_G_enh = trainerG_enh.apply_gradients(g_grads_enh)
 
 ################################################################################
 # TRAIN MODEL
@@ -296,13 +315,18 @@ if (mode == "train"):
     sample_frequency = 200 #How often to generate sample gif of translated images.
     save_frequency = 2000 #How often to save model.
 
-    init = tf.compat.v1.global_variables_initializer()
-    saver = tf.compat.v1.train.Saver()
-    with tf.compat.v1.Session() as sess:
-        sess.run(init)
+    init_fill = tf.compat.v1.global_variables_initializer()
+    saver_fill = tf.compat.v1.train.Saver()
+    init_enh = tf.compat.v1.global_variables_initializer()
+    saver_enh = tf.compat.v1.train.Saver()
+    with tf.compat.v1.Session() as sess_fill, tf.compat.v1.Session() as sess_enh:
+        sess_fill.run(init_fill)
+        sess_enh.run(init_enh)
         if load_model == True:
-            ckpt = tf.train.get_checkpoint_state(ckpt_path)
-            saver.restore(sess,ckpt.model_checkpoint_path)
+            ckpt_fill = tf.train.get_checkpoint_state(ckpt_path)
+            saver_fill.restore(sess_fill,ckpt_fill.model_checkpoint_path)
+            ckpt_enh = tf.train.get_checkpoint_state(ckpt_path)
+            saver_enh.restore(sess_enh,ckpt_enh.model_checkpoint_path)
 
         for i in range(iterations):
             # Load frame group
@@ -316,17 +340,22 @@ if (mode == "train"):
             assert not np.any(np.isnan(ys))
 
             for _ in range(EPOCHS):
-                _,dLoss = sess.run([update_D,d_loss],feed_dict={real_in:ys,condition_in:xs}) #Update the discriminator
-                _,gLoss = sess.run([update_G,g_loss],feed_dict={real_in:ys,condition_in:xs}) #Update the generator
+                _,dLoss_fill = sess_fill.run([update_D_fill,d_loss_fill],feed_dict={real_in:ys,condition_in:xs}) #Update the discriminator
+                _,gLoss_fill = sess_fill.run([update_G_fill,g_loss_fill],feed_dict={real_in:ys,condition_in:xs}) #Update the generator
+                sample_G_fill = sess_fill.run(Gx_fill,feed_dict={condition_in:xs}) #Use new z to get sample images from generator.
+                _,dLoss_enh = sess_enh.run([update_D_enh,d_loss_enh],feed_dict={real_in:ys,condition_in:sample_G_fill}) #Update the discriminator
+                _,gLoss_enh = sess_enh.run([update_G_enh,g_loss_enh],feed_dict={real_in:ys,condition_in:sample_G_fill}) #Update the generator
 
-            assert not (np.isnan(gLoss) or np.isnan(dLoss))
+            assert not (np.isnan(gLoss_fill) or np.isnan(dLoss_fill))
+            assert not (np.isnan(gLoss_enh) or np.isnan(dLoss_enh))
 
             if i % sample_frequency == 0:
                 frame_idx = np.random.randint(0,len(imagesX))
-                print(f"Iteration: {i} Current Frame: {current_frame-FRAME_GROUP+frame_idx} Gen Loss: {str(gLoss)} Disc Loss: {str(dLoss)}")
+                print(f"Iteration: {i} Current Frame: {current_frame-FRAME_GROUP+frame_idx} GFill Loss: {str(gLoss_fill)} DFill Loss: {str(dLoss_fill)} GEnh Loss: {str(gLoss_enh)} DEnh Loss: {str(dLoss_enh)}")
                 xs = ((np.reshape(imagesX[frame_idx],[1,FRAME_HEIGHT,FRAME_WIDTH,3]) / 255.0) - 0.5) * 2.0
                 ys = ((np.reshape(imagesY[frame_idx],[1,FRAME_HEIGHT,FRAME_WIDTH,3]) / 255.0) - 0.5) * 2.0
-                sample_G = sess.run(Gx,feed_dict={condition_in:xs}) #Use new z to get sample images from generator.
+                sample_G_fill = sess_fill.run(Gx_fill,feed_dict={condition_in:xs}) #Use new z to get sample images from generator.
+                sample_G_enh = sess_enh.run(Gx_enh,feed_dict={condition_in:sample_G_fill}) #Use new z to get sample images from generator.
 
                 if not os.path.exists(output_path):
                     os.makedirs(output_path)
@@ -337,7 +366,7 @@ if (mode == "train"):
                 width_start = width_diff // 2
                 width_end = FRAME_WIDTH - (width_diff // 2)
 
-                sample_frame = (np.around(((sample_G[0] / 2.0) + 0.5) * 255.0)).astype(np.uint8)
+                sample_frame = (np.around(((sample_G_enh[0] / 2.0) + 0.5) * 255.0)).astype(np.uint8)
                 sample_frame_overlay = np.copy(sample_frame)
                 sample_frame_overlay[:, width_start:width_end, :] = imagesX[frame_idx].astype(np.uint8)[:, width_start:width_end, :]
 
@@ -349,13 +378,15 @@ if (mode == "train"):
             if ((i % save_frequency == 0) and (i != 0)):
                 if not os.path.exists(ckpt_path):
                     os.makedirs(ckpt_path)
-                saver.save(sess,ckpt_path+'/widescreenify_model_'+str(datetime.now().strftime("%m%d%Y_%H_%M_%S"))+'.ckpt')
+                saver_fill.save(sess_fill,ckpt_path+'/widescreenify_fill_model_'+str(datetime.now().strftime("%m%d%Y_%H_%M_%S"))+'.ckpt')
+                saver_enh.save(sess_enh,ckpt_path+'/widescreenify_enh_model_'+str(datetime.now().strftime("%m%d%Y_%H_%M_%S"))+'.ckpt')
                 print("Saved Model")
 
         # Save of final model
         if not os.path.exists(ckpt_path):
             os.makedirs(ckpt_path)
-        saver.save(sess,ckpt_path+'/widescreenify_model_'+str(datetime.now().strftime("%m%d%Y_%H_%M_%S"))+'.ckpt')
+        saver_fill.save(sess_fill,ckpt_path+'/widescreenify_fill_model_'+str(datetime.now().strftime("%m%d%Y_%H_%M_%S"))+'.ckpt')
+        saver_enh.save(sess_enh,ckpt_path+'/widescreenify_enh_model_'+str(datetime.now().strftime("%m%d%Y_%H_%M_%S"))+'.ckpt')
         print("Saved Model")
 
 ################################################################################
@@ -368,13 +399,16 @@ if (mode == "test"):
     if not os.path.exists(output_path):
         os.makedirs(output_path)
 
-    init = tf.compat.v1.global_variables_initializer()
-    saver = tf.compat.v1.train.Saver()
-    with tf.compat.v1.Session() as sess:
-        sess.run(init)
+    init_fill = tf.compat.v1.global_variables_initializer()
+    saver_fill = tf.compat.v1.train.Saver()
+    with tf.compat.v1.Session() as sess_fill, tf.compat.v1.Session() as sess_enh:
+        sess_fill.run(init_fill)
+        sess_enh.run(init_enh)
         if load_model == True:
-            ckpt = tf.train.get_checkpoint_state(ckpt_path)
-            saver.restore(sess,ckpt.model_checkpoint_path)
+            ckpt_fill = tf.train.get_checkpoint_state(ckpt_path)
+            saver_fill.restore(sess_fill,ckpt_fill.model_checkpoint_path)
+            ckpt_enh = tf.train.get_checkpoint_state(ckpt_path)
+            saver_enh.restore(sess_enh,ckpt_enh.model_checkpoint_path)
 
             output_file_name = ntpath.basename(video_path).split(".")[-2] + "_WIDE." + ntpath.basename(video_path).split(".")[-1]
             wide_video = cv2.VideoWriter(os.path.join(output_path, output_file_name), cv2.VideoWriter_fourcc('M','P','E','G'), frame_rate, (FRAME_WIDTH, FRAME_HEIGHT))
@@ -383,9 +417,10 @@ if (mode == "test"):
                 # Load frame group
                 current_frame, imagesX, imagesY =  get_frame_group(video, current_frame, start_frame, stop_frame, mode, False)
                 xs = ((imagesX / 255.0) - 0.5) * 2.0
-                sample_G = sess.run(Gx,feed_dict={condition_in:xs}) #Use new z to get sample images from generator.
+                sample_G_fill = sess_fill.run(Gx_fill,feed_dict={condition_in:xs}) #Use new z to get sample images from generator.
+                sample_G_enh = sess_enh.run(Gx_enh,feed_dict={condition_in:sample_G_fill}) #Use new z to get sample images from generator.
 
-                output_frames = ((sample_G / 2.0) + 0.5) * 255.0
+                output_frames = ((sample_G_enh / 2.0) + 0.5) * 255.0
                 output_frames = np.around(output_frames).astype(np.uint8)
 
                 for i, frame in enumerate(output_frames):
