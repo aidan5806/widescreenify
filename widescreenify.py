@@ -9,6 +9,7 @@ import argparse
 import os
 from datetime import datetime
 import ntpath
+from sys import platlibdir
 
 import numpy as np
 from math import ceil
@@ -22,8 +23,8 @@ import cv2 # https://learnopencv.com/read-write-and-display-a-video-using-opencv
 
 # PARAMS
 FRAME_GROUP = 1
-FRAME_HEIGHT = 144 # 720
-FRAME_WIDTH = 256 # 1280
+FRAME_HEIGHT = 288 # 720
+FRAME_WIDTH = 512 # 1280
 FRAME_RESCALE = 1
 EPOCHS = 1
 MODEL_SCALE = 32 # Originally 32, used 8 at HD
@@ -65,10 +66,6 @@ def get_frame_group(video, current_frame, start_frame, stop_frame, mode, random_
     group_stop_frame = current_frame + FRAME_GROUP if ((current_frame + FRAME_GROUP) <= stop_frame) else stop_frame
     group_frame_count = group_stop_frame - current_frame
 
-    input_frames = np.zeros((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
-    if (mode == "train"):
-        output_frames = np.zeros((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), np.dtype('float32'))
-
     video.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
 
     for frame_index in range(0, group_frame_count):
@@ -84,18 +81,32 @@ def get_frame_group(video, current_frame, start_frame, stop_frame, mode, random_
             else:
                 frame = cv2.resize(frame, dsize=(((FRAME_WIDTH // W_RATIO) * I_RATIO),FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR)
 
+        orig_frame = np.copy(frame)
+        frame = cv2.GaussianBlur(frame, (7,7), cv2.BORDER_DEFAULT)
+        # frame = np.dstack((cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)))
+
+        dom_color_data = np.reshape(frame, (-1,3)).astype(np.float32)
+
+        n_colors = 1
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 200, .1)
+        flags = cv2.KMEANS_RANDOM_CENTERS
+
+        _, _, palette = cv2.kmeans(dom_color_data, n_colors, None, criteria, 10, flags)
+
         if (mode == "train"):
-            # frame = cv2.GaussianBlur(frame, (7,7), cv2.BORDER_DEFAULT)
-            frame = np.dstack((cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)))
+            input_frames = np.full((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), palette[0], np.dtype('float32'))
+            output_frames = np.full((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), palette[0], np.dtype('float32'))
+
             input_frames[frame_index, :, width_start:width_end, :] = frame[:, width_start:width_end, :]
             output_frames[frame_index] = frame
         else:
-            input_frames[frame_index, :, width_start:width_end, :] = frame
+            input_frames = np.full((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), palette[0], np.dtype('float32'))
+            output_frames = np.full((group_frame_count, FRAME_HEIGHT, FRAME_WIDTH, 3), palette[0], np.dtype('float32'))
 
-    if (mode == "train"):
-        return group_stop_frame, input_frames, output_frames
-    else:
-        return group_stop_frame, input_frames, None
+            input_frames[frame_index, :, width_start:width_end, :] = frame
+            output_frames[frame_index, :, width_start:width_end, :] = orig_frame
+
+    return group_stop_frame, input_frames, output_frames
 
 #This function performns a leaky relu activation, which is needed for the discriminator network.
 def lrelu(x, leak=0.2, name="lrelu"):
@@ -382,7 +393,7 @@ if (mode == "test"):
                     width_start = width_diff // 2
                     width_end = FRAME_WIDTH - (width_diff // 2)
 
-                    frame[:, width_start:width_end, :] = imagesX[i].astype(np.uint8)[:, width_start:width_end, :]
+                    frame[:, width_start:width_end, :] = imagesY[i].astype(np.uint8)[:, width_start:width_end, :]
 
                     wide_video.write(frame)
 
